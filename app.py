@@ -1,3 +1,18 @@
+# =========================================================
+# 【重要】pyrenderのエラー回避のための環境変数設定
+# =========================================================
+import os
+# OpenGLのGLXエラーを回避し、Mesaを強制的に使用させる
+os.environ["PYOPENGL_PLATFORM"] = "osmesa"
+os.environ["MESA_GL_VERSION_OVERRIDE"] = "3.3" 
+# =========================================================
+
+import streamlit as st
+import trimesh
+import pyrender # レンダリングに必要
+import numpy as np
+# ... (他のインポートとロジックを続ける)
+
 import streamlit as st
 import trimesh
 import pyrender # レンダリングに必要
