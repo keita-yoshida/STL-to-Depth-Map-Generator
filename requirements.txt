@@ -1,0 +1,5 @@
+streamlit
+trimesh
+pyrender
+numpy
+opencv-python
