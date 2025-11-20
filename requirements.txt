@@ -3,4 +3,3 @@ trimesh
 pyrender
 numpy
 opencv-python
-mesa-renderer
