@@ -3,3 +3,5 @@ trimesh
 pyrender
 numpy
 opencv-python
+# ソフトウェアレンダリングを可能にする
+mesa-renderer
