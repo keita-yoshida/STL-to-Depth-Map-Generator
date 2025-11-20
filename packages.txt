@@ -1,9 +1,6 @@
-# OpenGL/Mesa (レンダリングバックエンド)
 libgl1-mesa-glx
 libegl1-mesa
 libosmesa6
-
-# Pyglet/X11依存関係 (ヘッドレス環境で必要)
 libxrender1
 libxi6
 libglu1-mesa
