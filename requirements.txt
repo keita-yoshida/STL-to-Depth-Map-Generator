@@ -4,4 +4,4 @@ pyrender
 numpy
 opencv-python
 PyOpenGL==3.1.5
-collections-abc
+six
