@@ -1,3 +1,2 @@
-# OpenGLドライバと関連ライブラリをインストール
 libgl1-mesa-glx
 libegl1-mesa
