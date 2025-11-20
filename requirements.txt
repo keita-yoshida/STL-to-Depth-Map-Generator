@@ -3,3 +3,4 @@ trimesh
 pyrender
 numpy
 opencv-python
+PyOpenGL==3.1.5
