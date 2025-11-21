@@ -1,6 +1,1 @@
-libgl1-mesa-glx
-libegl1-mesa
-libosmesa6
-libxrender1
-libxi6
-libglu1-mesa
+
