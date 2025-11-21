@@ -1,101 +1,52 @@
-import streamlit as st
 import trimesh
-import numpy as np
-import cv2
-from io import BytesIO
 
-# --- 1. アプリケーション設定 ---
-st.title("STL to Depth Map Generator (Trimesh Raycasting)")
-st.info("Pyrenderの問題を回避するため、trimeshのレイトレーシング機能で深度マップを生成します。")
+# ====== 設定 ======
+INPUT_FILE = "model.stl"        # 読み込みたいSTL/OBJ
+OUTPUT_FILE = "top_view.png"    # 出力画像ファイル名
+RESOLUTION = (1024, 1024)       # 出力画像サイズ
+# ===================
 
-# 深度マップの解像度
-W, H = 512, 512
+# メッシュを読み込む
+mesh = trimesh.load(INPUT_FILE)
 
-# --- 2. ファイルアップロード ---
-uploaded_file = st.file_uploader("STLファイルをアップロードしてください", type=["stl"])
+# シーンを作成
+scene = mesh.scene()
 
-if uploaded_file is not None:
-    file_bytes = BytesIO(uploaded_file.getvalue())
-    
-    try:
-        # --- 3. STLの読み込み (trimesh) ---
-        mesh = trimesh.load_mesh(file_bytes, file_type='stl')
-        
-        if not isinstance(mesh, trimesh.Trimesh):
-            st.error("アップロードされたファイルは有効なメッシュデータではありません。")
-            # 修正: return ではなく st.stop() を使用する
-            st.stop()
-            # return <-- オリジナルのコードでエラーが発生した場所
-        # --- 4. 仮想カメラと投影の設定 ---
-        
-        # モデルの境界ボックスの対角線の長さ
-        max_extents = mesh.extents.max()
-        
-        # カメラはZ軸方向からメッシュ全体が見えるように配置
-        camera_distance = max_extents * 2.5
-        
-        # モデルの中心をカメラが向くように変換行列を構築
-        camera_transform = np.array([
-            [1, 0, 0, mesh.centroid[0]],
-            [0, 1, 0, mesh.centroid[1]],
-            [0, 0, 1, mesh.centroid[2] + camera_distance], # Z方向に離す
-            [0, 0, 0, 1]
-        ])
+# カメラを「真上」（+Z方向）に向ける
+# 正射影（パースなし）カメラ
+camera = trimesh.scene.cameras.OrthographicCamera(
+    resolution=RESOLUTION,
+    zfar=1000,
+    znear=0.01
+)
 
-        # 視錐台の視野角 (FOV) を計算 (モデルが画面に収まるように)
-        tan_half_fov = (max_extents / 2.0) / camera_distance
-        fov = np.arctan(tan_half_fov) * 2
+# カメラを mesh のバウンディングボックスの上に配置
+bbox = mesh.bounds
+center = bbox.mean(axis=0)
+extent = bbox[1] - bbox[0]
 
-        # レイトレーシングのためのレイの始点と方向を手動で生成
-        ray_origins, ray_directions = trimesh.util.create_perspective_rays(
-            resolution=[W, H],
-            transform=camera_transform,
-            fov=fov
-        )
-        
-        # レイトレーシングを実行
-        # locations: 交点の座標, index_ray: どのレイがヒットしたか
-        locations, index_ray, index_tri = mesh.ray.intersects_location(
-            ray_origins, ray_directions, multiple_hits=False
-        )
-        
-        # --- 5. 深度マップの生成 ---
-        
-        # 全てのピクセルに対応する深度配列を初期化 (遠い点を最大値として設定)
-        max_dist = camera_distance * 3
-        depth_map = np.full(W * H, max_dist, dtype=np.float32)
+# 上方向 (Z軸) から見下ろす位置
+camera_position = [center[0], center[1], center[2] + extent[2] * 2]
 
-        # 交点までの距離を計算 (カメラ位置から交点まで)
-        camera_origin = camera_transform[:3, 3]
-        
-        # ヒットしたレイの、カメラ位置から交点までのユークリッド距離
-        distances = np.linalg.norm(locations - camera_origin, axis=1)
-        
-        # 深度マップに距離を書き込む
-        depth_map[index_ray] = distances
-        depth_map = depth_map.reshape((H, W))
+# カメラ変換行列を設定（Z軸方向から見下ろす）
+camera_transform = trimesh.geometry.look_at(
+    points=[camera_position],
+    center=center,
+    up=[0, 1, 0]
+)[0]
 
-        # --- 6. 深度値の正規化と画像化 (OpenCV) ---
-        
-        # 深度値を0-255の範囲に正規化 (8bitグレースケール)
-        # NORM_MINMAX: 最小値と最大値を指定した範囲に正規化
-        depth_normalized = cv2.normalize(depth_map, None, 255, 0, cv2.NORM_MINMAX, cv2.CV_8U)
-        
-        # PNGファイルとしてメモリに書き出し
-        is_success, buffer = cv2.imencode(".png", depth_normalized)
-        png_bytes = BytesIO(buffer.tobytes())
+# カメラをシーンに設定
+scene.camera = camera
+scene.camera_transform = camera_transform
 
-        # --- 7. 結果の表示とダウンロード ---
-        st.subheader("生成された深度マップ")
-        st.image(png_bytes, caption="Depth Map (近: 黒, 遠: 白)")
-        
-        st.download_button(
-            label="深度マップ (.png) をダウンロード",
-            data=png_bytes,
-            file_name="depth_map.png",
-            mime="image/png"
-        )
+# 画像として保存（PNGバイトが返る）
+img = scene.save_image(
+    resolution=RESOLUTION,
+    visible=True
+)
 
-    except Exception as e:
-        st.error(f"処理中にエラーが発生しました: {e}")
-        st.info("コードまたはSTLファイルに問題がある可能性があります。")
+# ファイルへ書き込み
+with open(OUTPUT_FILE, "wb") as f:
+    f.write(img)
+
+print("上面ビューを出力しました:", OUTPUT_FILE)
