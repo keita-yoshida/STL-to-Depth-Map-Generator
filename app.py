@@ -13,44 +13,44 @@ W, H = 512, 512
 
 # --- 2. セッションステートの初期化と回転ボタン (十字キー配置) ---
 
-# Z軸回転 (左右) のためのヨー角
+# Y軸回転 (左右に回り込む) のためのヨー角
 if 'yaw_angle' not in st.session_state:
     st.session_state['yaw_angle'] = 0
-# X軸回転 (上下) のためのピッチ角
+# X軸回転 (上下に傾ける) のためのピッチ角
 if 'pitch_angle' not in st.session_state:
     st.session_state['pitch_angle'] = 0
 
 def rotate_yaw(degrees):
-    """Z軸周りの回転 (ヨー)"""
+    """Y軸周りの回転 (左右に回り込む)"""
     st.session_state['yaw_angle'] = (st.session_state['yaw_angle'] + degrees) % 360
 
 def rotate_pitch(degrees):
-    """X軸周りの回転 (ピッチ)"""
+    """X軸周りの回転 (上下に傾ける)"""
     st.session_state['pitch_angle'] = (st.session_state['pitch_angle'] + degrees) % 360
 
 st.sidebar.subheader("モデル回転 (十字キー)")
 
-# 1. 上下回転（上ボタン）: 中央に配置
+# 1. 上下回転（上ボタン）: 中央に配置 (X軸)
 col_p_up, col_p_mid, col_p_down = st.sidebar.columns([1, 1, 1])
 with col_p_mid:
     st.button("上へ 90°", on_click=rotate_pitch, args=(-90,), use_container_width=True, key="pitch_up", help="X軸周りに回転 (モデルが上へ傾く)")
 
-# 2. 左右回転: 中央の行に配置
+# 2. 左右回転: 中央の行に配置 (Y軸)
 col_y_left, col_y_mid, col_y_right = st.sidebar.columns([1, 1, 1])
 with col_y_left:
-    # 🔥 修正: オブジェクトを時計回り (+90) に回転させ、カメラが左に回り込んだように見せる
-    st.button("左へ 90°", on_click=rotate_yaw, args=(90,), use_container_width=True, key="yaw_left", help="Z軸周りに回転 (カメラが左に回り込む)")
+    # Y軸回転: オブジェクトを時計回り (+90) に回転させ、カメラが左に回り込んだように見せる
+    st.button("左へ 90°", on_click=rotate_yaw, args=(90,), use_container_width=True, key="yaw_left", help="Y軸周りに回転 (カメラが左に回り込む)")
 with col_y_right:
-    # 🔥 修正: オブジェクトを反時計回り (-90) に回転させ、カメラが右に回り込んだように見せる
-    st.button("右へ 90°", on_click=rotate_yaw, args=(-90,), use_container_width=True, key="yaw_right", help="Z軸周りに回転 (カメラが右に回り込む)")
+    # Y軸回転: オブジェクトを反時計回り (-90) に回転させ、カメラが右に回り込んだように見せる
+    st.button("右へ 90°", on_click=rotate_yaw, args=(-90,), use_container_width=True, key="yaw_right", help="Y軸周りに回転 (カメラが右に回り込む)")
 
-# 3. 上下回転（下ボタン）: 中央に配置
+# 3. 上下回転（下ボタン）: 中央に配置 (X軸)
 col_p_up_2, col_p_mid_2, col_p_down_2 = st.sidebar.columns([1, 1, 1])
 with col_p_mid_2:
     st.button("下へ 90°", on_click=rotate_pitch, args=(90,), use_container_width=True, key="pitch_down", help="X軸周りに回転 (モデルが下へ傾く)")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"**Z軸角度 (左右): {st.session_state['yaw_angle']}°**")
+st.sidebar.markdown(f"**Y軸角度 (左右): {st.session_state['yaw_angle']}°**")
 st.sidebar.markdown(f"**X軸角度 (上下): {st.session_state['pitch_angle']}°**")
 st.sidebar.markdown("---")
 
@@ -75,13 +75,14 @@ if uploaded_file is not None:
         yaw_rad = np.radians(st.session_state['yaw_angle'])
         pitch_rad = np.radians(st.session_state['pitch_angle'])
 
-        # Z軸回転行列 (左右)
-        yaw_matrix = trimesh.transformations.rotation_matrix(yaw_rad, [0, 0, 1])
+        # 🔥 修正: 左右回転をY軸周りに変更
+        # Y軸回転行列 (左右)
+        yaw_matrix = trimesh.transformations.rotation_matrix(yaw_rad, [0, 1, 0])
         
         # X軸回転行列 (上下)
         pitch_matrix = trimesh.transformations.rotation_matrix(pitch_rad, [1, 0, 0])
 
-        # 変換行列を合成 (先にピッチを適用してからヨーを適用)
+        # 変換行列を合成
         combined_matrix = trimesh.transformations.concatenate_matrices(pitch_matrix, yaw_matrix)
         
         # メッシュに適用
@@ -150,12 +151,12 @@ if uploaded_file is not None:
     # --- 8. 結果の表示とダウンロード ---
     st.subheader("生成された上面図深度マップ（正射影）")
     
-    caption_text = f"Depth Map (Z軸: {st.session_state['yaw_angle']}°, X軸: {st.session_state['pitch_angle']}°) - Z値が低い: 黒, Z値が高い: 白"
+    caption_text = f"Depth Map (Y軸: {st.session_state['yaw_angle']}°, X軸: {st.session_state['pitch_angle']}°) - Z値が低い: 黒, Z値が高い: 白"
     st.image(png_bytes, caption=caption_text)
     
     st.download_button(
         label="深度マップ (.png) をダウンロード",
         data=png_bytes,
-        file_name=f"depth_map_ortho_z{st.session_state['yaw_angle']}_x{st.session_state['pitch_angle']}.png",
+        file_name=f"depth_map_ortho_y{st.session_state['yaw_angle']}_x{st.session_state['pitch_angle']}.png",
         mime="image/png"
     )
