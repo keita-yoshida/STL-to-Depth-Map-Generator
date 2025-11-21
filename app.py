@@ -64,4 +64,61 @@ if uploaded_file is not None:
         # レイの始点は投影平面上の各点と、Z軸上のカメラ位置
         ray_origins = np.stack((X.flatten(), Y.flatten(), np.full(W * H, camera_origin_z)), axis=1).astype(np.float64)
         
-        # レイの方向は
+        # レイの方向は全てZ軸マイナス方向（[0, 0, -1]）
+        ray_directions = np.tile(np.array([0.0, 0.0, -1.0]), (W * H, 1)).astype(np.float64)
+        
+        # --- 6. レイトレーシングを実行 ---
+        locations, index_ray, index_tri = mesh.ray.intersects_location(
+            ray_origins, ray_directions, multiple_hits=False
+        )
+        
+        # --- 7. 深度マップの生成 ---
+        
+        # 深度マップを初期化 (ヒットしなかったピクセルはモデルのZ軸最低値で初期化)
+        depth_map = np.full(W * H, min_xyz[2], dtype=np.float32) 
+
+        # ヒットしたレイの、Z座標（深度）を取得
+        hit_depths = locations[:, 2] 
+        
+        # 深度マップにZ座標を書き込む
+        depth_map[index_ray] = hit_depths
+        
+        # 深度マップを2D配列にリシェイプ
+        depth_map = depth_map.reshape((H, W))
+
+        # --- 8. 深度値の正規化と画像化 (OpenCV) ---
+        
+        actual_z_range = max_xyz[2] - min_xyz[2]
+        
+        if actual_z_range <= 1e-6: # ほぼ平面の場合の対策
+            depth_normalized = np.full((H, W), 128, dtype=np.uint8) 
+        else:
+            # 深度値を0-255の範囲に正規化
+            depth_normalized = cv2.normalize(
+                src=depth_map, 
+                dst=None, 
+                alpha=0,  
+                beta=255, 
+                norm_type=cv2.NORM_MINMAX, 
+                dtype=cv2.CV_8U 
+            )
+            
+        # PNGファイルとしてメモリに書き出し
+        is_success, buffer = cv2.imencode(".png", depth_normalized)
+        png_bytes = BytesIO(buffer.tobytes())
+
+        # --- 9. 結果の表示とダウンロード ---
+        st.subheader("生成された上面図深度マップ（正射影）")
+        st.image(png_bytes, caption="Depth Map (Z値が低い: 黒, Z値が高い: 白)")
+        
+        st.download_button(
+            label="深度マップ (.png) をダウンロード",
+            data=png_bytes,
+            file_name="depth_map_ortho.png",
+            mime="image/png"
+        )
+
+    except Exception as e:
+        # if uploaded_file is not None の直後の try に対応する except ブロック
+        st.error(f"処理中にエラーが発生しました: {e}")
+        st.info("STLファイルのデータ構造、またはデプロイ環境に問題がある可能性があります。")
