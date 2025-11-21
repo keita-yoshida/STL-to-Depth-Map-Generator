@@ -1,52 +1,104 @@
+import streamlit as st
 import trimesh
+import numpy as np
+from io import BytesIO
+from PIL import Image # 画像生成のためにPillowを使用
 
-# ====== 設定 ======
-INPUT_FILE = "model.stl"        # 読み込みたいSTL/OBJ
-OUTPUT_FILE = "top_view.png"    # 出力画像ファイル名
-RESOLUTION = (1024, 1024)       # 出力画像サイズ
-# ===================
+# --- 1. アプリケーション設定 ---
+st.title("STL to Depth Map Generator (Simple)")
+st.info("外部依存を最小限に抑えた、trimeshとnumpyのみによる処理です。")
 
-# メッシュを読み込む
-mesh = trimesh.load(INPUT_FILE)
+# 深度マップの解像度
+W, H = 512, 512
 
-# シーンを作成
-scene = mesh.scene()
+# --- 2. ファイルアップロード ---
+uploaded_file = st.file_uploader("STLファイルをアップロードしてください", type=["stl"])
 
-# カメラを「真上」（+Z方向）に向ける
-# 正射影（パースなし）カメラ
-camera = trimesh.scene.cameras.OrthographicCamera(
-    resolution=RESOLUTION,
-    zfar=1000,
-    znear=0.01
-)
+if uploaded_file is not None:
+    file_bytes = BytesIO(uploaded_file.getvalue())
+    
+    try:
+        # --- 3. STLの読み込み (trimesh) ---
+        mesh = trimesh.load_mesh(file_bytes, file_type='stl')
+        
+        if not isinstance(mesh, trimesh.Trimesh):
+            st.error("アップロードされたファイルは有効なメッシュデータではありません。")
+            st.stop() # st.stop()を使用
 
-# カメラを mesh のバウンディングボックスの上に配置
-bbox = mesh.bounds
-center = bbox.mean(axis=0)
-extent = bbox[1] - bbox[0]
+        # モデルのZ座標を反転し、最小値を0に調整 (上面図の深度データとして扱いやすくする)
+        # Z座標が最も高い（上面）部分が、深度マップで最も暗くなるようにする
+        
+        # Z座標の最大値と最小値を取得
+        z_min = mesh.vertices[:, 2].min()
+        z_max = mesh.vertices[:, 2].max()
+        
+        # モデルをZ軸で正規化し、Z=0をベースにする
+        normalized_vertices = mesh.vertices.copy()
+        normalized_vertices[:, 2] -= z_min
+        
+        z_range = z_max - z_min
+        
+        if z_range == 0:
+            st.error("モデルが2次元（平面）であるため、深度マップを生成できません。")
+            st.stop()
+            
+        # --- 4. 2D投影の実行 (Z軸方向の投影) ---
+        
+        # 頂点をX-Y平面に投影し、ピクセルグリッドにマッピングする
+        
+        # モデルのXとYの範囲を計算
+        x_min, y_min = mesh.vertices[:, 0:2].min(axis=0)
+        x_max, y_max = mesh.vertices[:, 0:2].max(axis=0)
+        
+        # ピクセルあたりのスケールを計算 (アスペクト比を維持)
+        x_span = x_max - x_min
+        y_span = y_max - y_min
+        
+        # グリッドの初期化 (深度データとして、最も遠い深度で初期化)
+        # 深度を反転させるため、最も遠いZ値（z_range）で初期化
+        depth_grid = np.full((H, W), z_range, dtype=np.float32) 
+        
+        # 頂点の座標をピクセル座標に変換
+        # x_coords: 0 から W-1, y_coords: 0 から H-1
+        x_coords = ((normalized_vertices[:, 0] - x_min) / x_span * (W - 1)).astype(int)
+        y_coords = ((normalized_vertices[:, 1] - y_min) / y_span * (H - 1)).astype(int)
+        
+        # Z値（深度）を取得
+        z_values = normalized_vertices[:, 2]
 
-# 上方向 (Z軸) から見下ろす位置
-camera_position = [center[0], center[1], center[2] + extent[2] * 2]
+        # グリッドに深度を書き込む
+        # ここでは単純に頂点のみをプロットしていますが、これが最もシンプルな上面投影です
+        for x, y, z in zip(x_coords, y_coords, z_values):
+            # 同じピクセルに複数の頂点がある場合、最も近いもの（Z値が小さいもの）を採用
+            # しかし、上面図なので、ここでは単純にZ値を書き込む
+            # Z値を255スケールに正規化して格納
+            depth_grid[y, x] = min(depth_grid[y, x], z)
+        
+        # --- 5. 画像化 ---
+        
+        # 深度を0-255のグレースケールに正規化
+        # 深度が浅い（Z値が大きい）ほど明るく（255）なるように反転させる
+        normalized_depth = (255 * (depth_grid / z_range)).astype(np.uint8)
+        
+        # PIL (Pillow) を使用して画像に変換
+        img = Image.fromarray(normalized_depth).transpose(Image.FLIP_TOP_BOTTOM) # Y軸を反転して正しい向きに
+        
+        # PNGファイルとしてメモリに書き出し
+        png_bytes = BytesIO()
+        img.save(png_bytes, format='PNG')
+        png_bytes.seek(0)
 
-# カメラ変換行列を設定（Z軸方向から見下ろす）
-camera_transform = trimesh.geometry.look_at(
-    points=[camera_position],
-    center=center,
-    up=[0, 1, 0]
-)[0]
 
-# カメラをシーンに設定
-scene.camera = camera
-scene.camera_transform = camera_transform
+        # --- 6. 結果の表示とダウンロード ---
+        st.subheader("生成された上面投影深度マップ")
+        st.image(png_bytes, caption="Depth Map (Z値が深い: 黒, Z値が浅い: 白)")
+        
+        st.download_button(
+            label="深度マップ (.png) をダウンロード",
+            data=png_bytes,
+            file_name="depth_map_simple.png",
+            mime="image/png"
+        )
 
-# 画像として保存（PNGバイトが返る）
-img = scene.save_image(
-    resolution=RESOLUTION,
-    visible=True
-)
-
-# ファイルへ書き込み
-with open(OUTPUT_FILE, "wb") as f:
-    f.write(img)
-
-print("上面ビューを出力しました:", OUTPUT_FILE)
+    except Exception as e:
+        st.error(f"処理中に予期せぬエラーが発生しました: {e}")
