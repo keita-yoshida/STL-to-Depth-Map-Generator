@@ -1,12 +1,12 @@
 import streamlit as st
 import trimesh
 import numpy as np
+import cv2 # 深度マップの正規化と画像化に必要
 from io import BytesIO
-from PIL import Image # 画像生成のためにPillowを使用
 
 # --- 1. アプリケーション設定 ---
-st.title("STL to Depth Map Generator (Simple)")
-st.info("外部依存を最小限に抑えた、trimeshとnumpyのみによる処理です。")
+st.title("STL to Depth Map Generator (Raycasting)")
+st.info("trimeshのレイトレーシング機能で、高精度な深度マップを生成します。")
 
 # 深度マップの解像度
 W, H = 512, 512
@@ -23,82 +23,85 @@ if uploaded_file is not None:
         
         if not isinstance(mesh, trimesh.Trimesh):
             st.error("アップロードされたファイルは有効なメッシュデータではありません。")
-            st.stop() # st.stop()を使用
+            st.stop() # Streamlitの実行を停止
 
-        # モデルのZ座標を反転し、最小値を0に調整 (上面図の深度データとして扱いやすくする)
-        # Z座標が最も高い（上面）部分が、深度マップで最も暗くなるようにする
+        # --- 4. 仮想カメラと投影の設定 ---
         
-        # Z座標の最大値と最小値を取得
-        z_min = mesh.vertices[:, 2].min()
-        z_max = mesh.vertices[:, 2].max()
-        
-        # モデルをZ軸で正規化し、Z=0をベースにする
-        normalized_vertices = mesh.vertices.copy()
-        normalized_vertices[:, 2] -= z_min
-        
-        z_range = z_max - z_min
-        
-        if z_range == 0:
-            st.error("モデルが2次元（平面）であるため、深度マップを生成できません。")
-            st.stop()
-            
-        # --- 4. 2D投影の実行 (Z軸方向の投影) ---
-        
-        # 頂点をX-Y平面に投影し、ピクセルグリッドにマッピングする
-        
-        # モデルのXとYの範囲を計算
-        x_min, y_min = mesh.vertices[:, 0:2].min(axis=0)
-        x_max, y_max = mesh.vertices[:, 0:2].max(axis=0)
-        
-        # ピクセルあたりのスケールを計算 (アスペクト比を維持)
-        x_span = x_max - x_min
-        y_span = y_max - y_min
-        
-        # グリッドの初期化 (深度データとして、最も遠い深度で初期化)
-        # 深度を反転させるため、最も遠いZ値（z_range）で初期化
-        depth_grid = np.full((H, W), z_range, dtype=np.float32) 
-        
-        # 頂点の座標をピクセル座標に変換
-        # x_coords: 0 から W-1, y_coords: 0 から H-1
-        x_coords = ((normalized_vertices[:, 0] - x_min) / x_span * (W - 1)).astype(int)
-        y_coords = ((normalized_vertices[:, 1] - y_min) / y_span * (H - 1)).astype(int)
-        
-        # Z値（深度）を取得
-        z_values = normalized_vertices[:, 2]
+        # モデルの中心を原点に移動
+        mesh.vertices -= mesh.centroid
 
-        # グリッドに深度を書き込む
-        # ここでは単純に頂点のみをプロットしていますが、これが最もシンプルな上面投影です
-        for x, y, z in zip(x_coords, y_coords, z_values):
-            # 同じピクセルに複数の頂点がある場合、最も近いもの（Z値が小さいもの）を採用
-            # しかし、上面図なので、ここでは単純にZ値を書き込む
-            # Z値を255スケールに正規化して格納
-            depth_grid[y, x] = min(depth_grid[y, x], z)
+        # Bounding boxの対角線の長さ
+        max_extents = mesh.extents.max()
         
-        # --- 5. 画像化 ---
+        # カメラはZ軸方向からメッシュ全体が見えるように配置
+        camera_distance = max_extents * 2.5
         
-        # 深度を0-255のグレースケールに正規化
-        # 深度が浅い（Z値が大きい）ほど明るく（255）なるように反転させる
-        normalized_depth = (255 * (depth_grid / z_range)).astype(np.uint8)
+        # モデルの中心をカメラが向くように変換行列を構築
+        # 上面図（Z軸プラス方向からマイナス方向を見る）
+        camera_transform = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, camera_distance], 
+            [0, 0, 0, 1]
+        ])
+
+        # 視錐台の視野角 (FOV) を計算
+        tan_half_fov = (max_extents / 2.0) / camera_distance
+        fov = np.arctan(tan_half_fov) * 2
+
+        # --- 5. レイトレーシングのためのレイを生成 ---
         
-        # PIL (Pillow) を使用して画像に変換
-        img = Image.fromarray(normalized_depth).transpose(Image.FLIP_TOP_BOTTOM) # Y軸を反転して正しい向きに
+        # trimesh.util.create_perspective_rays を使用してレイの始点と方向を手動で計算
+        # 'RayMeshIntersector' object has no attribute 'camera_rays' エラーを回避
+        ray_origins, ray_directions = trimesh.util.create_perspective_rays(
+            resolution=[W, H],
+            transform=camera_transform,
+            fov=fov
+        )
+        
+        # レイトレーシングを実行
+        # locations: 交点の座標, index_ray: どのレイがヒットしたか
+        locations, index_ray, index_tri = mesh.ray.intersects_location(
+            ray_origins, ray_directions, multiple_hits=False
+        )
+        
+        # --- 6. 深度マップの生成 ---
+        
+        # 全てのピクセルに対応する深度配列を初期化 (遠い点を最大値として設定)
+        max_dist = camera_distance * 3
+        depth_map = np.full(W * H, max_dist, dtype=np.float32)
+
+        # 交点までの距離を計算 (カメラ位置から交点まで)
+        camera_origin = camera_transform[:3, 3]
+        
+        # ヒットしたレイの、カメラ位置から交点までのユークリッド距離
+        distances = np.linalg.norm(locations - camera_origin, axis=1)
+        
+        # 深度マップに距離を書き込む
+        depth_map[index_ray] = distances
+        depth_map = depth_map.reshape((H, W))
+
+        # --- 7. 深度値の正規化と画像化 (OpenCV) ---
+        
+        # 深度値を0-255の範囲に正規化
+        # NORM_MINMAX: 最小値と最大値を指定した範囲に正規化
+        depth_normalized = cv2.normalize(depth_map, None, 255, 0, cv2.NORM_MINMAX, cv2.CV_8U)
         
         # PNGファイルとしてメモリに書き出し
-        png_bytes = BytesIO()
-        img.save(png_bytes, format='PNG')
-        png_bytes.seek(0)
+        is_success, buffer = cv2.imencode(".png", depth_normalized)
+        png_bytes = BytesIO(buffer.tobytes())
 
-
-        # --- 6. 結果の表示とダウンロード ---
-        st.subheader("生成された上面投影深度マップ")
-        st.image(png_bytes, caption="Depth Map (Z値が深い: 黒, Z値が浅い: 白)")
+        # --- 8. 結果の表示とダウンロード ---
+        st.subheader("生成された深度マップ")
+        st.image(png_bytes, caption="Depth Map (近: 黒, 遠: 白)")
         
         st.download_button(
             label="深度マップ (.png) をダウンロード",
             data=png_bytes,
-            file_name="depth_map_simple.png",
+            file_name="depth_map.png",
             mime="image/png"
         )
 
     except Exception as e:
-        st.error(f"処理中に予期せぬエラーが発生しました: {e}")
+        st.error(f"処理中にエラーが発生しました: {e}")
+        st.info("依存関係、またはSTLファイルの構造に問題がある可能性があります。")
