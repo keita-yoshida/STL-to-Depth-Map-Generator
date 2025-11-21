@@ -38,9 +38,11 @@ with col_p_mid:
 # 2. 左右回転: 中央の行に配置
 col_y_left, col_y_mid, col_y_right = st.sidebar.columns([1, 1, 1])
 with col_y_left:
-    st.button("左へ 90°", on_click=rotate_yaw, args=(-90,), use_container_width=True, key="yaw_left", help="Z軸周りに回転 (反時計回り)")
+    # 🔥 修正: オブジェクトを時計回り (+90) に回転させ、カメラが左に回り込んだように見せる
+    st.button("左へ 90°", on_click=rotate_yaw, args=(90,), use_container_width=True, key="yaw_left", help="Z軸周りに回転 (カメラが左に回り込む)")
 with col_y_right:
-    st.button("右へ 90°", on_click=rotate_yaw, args=(90,), use_container_width=True, key="yaw_right", help="Z軸周りに回転 (時計回り)")
+    # 🔥 修正: オブジェクトを反時計回り (-90) に回転させ、カメラが右に回り込んだように見せる
+    st.button("右へ 90°", on_click=rotate_yaw, args=(-90,), use_container_width=True, key="yaw_right", help="Z軸周りに回転 (カメラが右に回り込む)")
 
 # 3. 上下回転（下ボタン）: 中央に配置
 col_p_up_2, col_p_mid_2, col_p_down_2 = st.sidebar.columns([1, 1, 1])
@@ -59,7 +61,6 @@ uploaded_file = st.file_uploader("STLファイルをアップロードしてく�
 if uploaded_file is not None:
     file_bytes = BytesIO(uploaded_file.getvalue())
     
-    # 処理の大部分は try-except で囲む
     try:
         # STLの読み込みとメッシュの前処理
         mesh = trimesh.load_mesh(file_bytes, file_type='stl')
@@ -87,7 +88,6 @@ if uploaded_file is not None:
         mesh.apply_transform(combined_matrix)
 
     except Exception as e:
-        # メッシュの読み込みや回転でエラーが発生した場合
         st.error(f"STLファイルの読み込みまたは処理中にエラーが発生しました: {e}")
         st.info("ファイルが破損しているか、依存ライブラリの初期化に失敗している可能性があります。")
         st.stop()
