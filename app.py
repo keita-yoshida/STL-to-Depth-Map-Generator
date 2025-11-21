@@ -2,8 +2,7 @@
 
         # --- 3. 深度マップのシミュレーション (TrimeshのRaycastingを使用) ---
         # 深度マップの解像度
-        W, H = 512, 512
-        
+W, H = 512, 512
         # 仮想カメラと投影の設定 (簡単な正面投影)
         # Bounding boxの対角線の長さ
         max_extents = mesh.extents.max()
