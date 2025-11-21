@@ -83,31 +83,28 @@ if uploaded_file is not None:
         # 深度マップを2D配列にリシェイプ
         depth_map = depth_map.reshape((H, W))
 
-        # --- 8. 深度値の正規化と画像化 (OpenCV) ---
+# --- 8. 深度値の正規化と画像化 (OpenCV) ---
         
-        actual_z_range = max_xyz[2] - min_xyz[2]
-        
-        if actual_z_range <= 1e-6: # ほぼ平面の場合の対策
-            depth_normalized = np.full((H, W), 128, dtype=np.uint8) # 中間グレーで埋める
-        else:
-            # 深度値をZminからZmaxの範囲で正規化
-            # ここでは `min_xyz[2]` を0、`max_xyz[2]` を255に対応させる
-            depth_normalized = cv2.normalize(
-                depth_map, 
-                None, 
-                0, 255, 
-                cv2.NORM_MINMAX, 
-                cv2.CV_8U,
-                # モデルのZ軸の最小値と最大値を正規化の範囲として与える
-                # Z値が低いほど0に、高いほど255に近づく
-                src_range=(min_xyz[2], max_xyz[2]) 
-            )
-            
-            # 反転は不要。Z値が高い（上）ほど白く、低い（下）ほど黒くなる
-            # ユーザーの要望「外側に行くほど下がるので縁が白いのはありえません」に対応
-            # Z値が低い（底に近い） = 黒 / Z値が高い（頂点に近い） = 白
-            
-        # PNGファイルとしてメモリに書き出し
+actual_z_range = max_xyz[2] - min_xyz[2]
+
+if actual_z_range <= 1e-6: # ほぼ平面の場合の対策
+    depth_normalized = np.full((H, W), 128, dtype=np.uint8) # 中間グレーで埋める
+else:
+    # 深度値を0-255の範囲に正規化 (CV_8U: 8ビット符号なし整数)
+    # OpenCVは depth_map 内の min/max を自動で計算し、0と255に対応させます。
+    depth_normalized = cv2.normalize(
+        src=depth_map, 
+        dst=None,  # 出力配列（この場合は不要）
+        alpha=0,   # 正規化後の最小値
+        beta=255,  # 正規化後の最大値
+        norm_type=cv2.NORM_MINMAX, 
+        dtype=cv2.CV_8U 
+    )
+    
+    # Z値が低い（底に近い） = 黒 / Z値が高い（頂点に近い） = 白 となるよう、反転処理は行いません。
+    # ピラミッドモデルの場合、外側（Z低）が黒、中心（Z高）が白になります。
+    
+# PNGファイルとしてメモリに書き出し
         is_success, buffer = cv2.imencode(".png", depth_normalized)
         png_bytes = BytesIO(buffer.tobytes())
 
