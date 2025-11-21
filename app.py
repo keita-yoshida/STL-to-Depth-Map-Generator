@@ -48,4 +48,114 @@ with col_p_mid_2:
     st.button("下へ 90°", on_click=rotate_pitch, args=(90,), use_container_width=True, key="pitch_down", help="X軸周りに回転 (モデルが下へ傾く)")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"**Z軸角度 (左右
+st.sidebar.markdown(f"**Z軸角度 (左右): {st.session_state['yaw_angle']}°**")
+st.sidebar.markdown(f"**X軸角度 (上下): {st.session_state['pitch_angle']}°**")
+st.sidebar.markdown("---")
+
+
+# --- 3. ファイルアップロード ---
+uploaded_file = st.file_uploader("STLファイルをアップロードしてください", type=["stl"])
+
+if uploaded_file is not None:
+    file_bytes = BytesIO(uploaded_file.getvalue())
+    
+    # 処理の大部分は try-except で囲む
+    try:
+        # STLの読み込みとメッシュの前処理
+        mesh = trimesh.load_mesh(file_bytes, file_type='stl')
+        
+        if not isinstance(mesh, trimesh.Trimesh):
+            st.error("アップロードされたファイルは有効なメッシュデータではありません。")
+            st.stop() 
+
+        mesh.vertices -= mesh.centroid
+
+        # 回転処理の適用
+        yaw_rad = np.radians(st.session_state['yaw_angle'])
+        pitch_rad = np.radians(st.session_state['pitch_angle'])
+
+        # Z軸回転行列 (左右)
+        yaw_matrix = trimesh.transformations.rotation_matrix(yaw_rad, [0, 0, 1])
+        
+        # X軸回転行列 (上下)
+        pitch_matrix = trimesh.transformations.rotation_matrix(pitch_rad, [1, 0, 0])
+
+        # 変換行列を合成 (先にピッチを適用してからヨーを適用)
+        combined_matrix = trimesh.transformations.concatenate_matrices(pitch_matrix, yaw_matrix)
+        
+        # メッシュに適用
+        mesh.apply_transform(combined_matrix)
+
+    except Exception as e:
+        # メッシュの読み込みや回転でエラーが発生した場合
+        st.error(f"STLファイルの読み込みまたは処理中にエラーが発生しました: {e}")
+        st.info("ファイルが破損しているか、依存ライブラリの初期化に失敗している可能性があります。")
+        st.stop()
+
+    # --- 4. 仮想カメラと正射影の設定 ---
+    bounds = mesh.bounds 
+    min_xyz = bounds[0]
+    max_xyz = bounds[1]
+    view_size_x = max_xyz[0] - min_xyz[0]
+    view_size_y = max_xyz[1] - min_xyz[1]
+    
+    aspect_ratio_mesh = view_size_x / view_size_y
+    aspect_ratio_image = W / H
+
+    if aspect_ratio_mesh > aspect_ratio_image:
+        view_width = view_size_x * 1.2 
+        view_height = view_width / aspect_ratio_image
+    else:
+        view_height = view_size_y * 1.2
+        view_width = view_height * aspect_ratio_image
+
+    camera_origin_z = max_xyz[2] + view_size_y * 2 
+    
+    # --- 5. レイトレーシングのためのレイを生成 ---
+    x_coords = np.linspace(-view_width / 2, view_width / 2, W)
+    y_coords = np.linspace(-view_height / 2, view_height / 2, H)
+    X, Y = np.meshgrid(x_coords, y_coords)
+    
+    origins_stack = np.stack((X.flatten(), Y.flatten(), np.full(W * H, camera_origin_z)), axis=1)
+    ray_origins = origins_stack.astype(np.float64)
+    ray_directions = np.tile(np.array([0.0, 0.0, -1.0]), (W * H, 1)).astype(np.float64)
+    
+    # --- 6. レイトレーシングを実行 ---
+    try:
+        locations, index_ray, index_tri = mesh.ray.intersects_location(
+            ray_origins, ray_directions, multiple_hits=False
+        )
+    except Exception as e:
+        st.error(f"レイトレーシング中にエラーが発生しました: {e}")
+        st.info("STLモデルの構造が複雑すぎるか、レイトレーシング機能に問題があります。")
+        st.stop()
+    
+    # --- 7. 深度マップの生成と表示 ---
+    depth_map = np.full(W * H, min_xyz[2], dtype=np.float32) 
+    hit_depths = locations[:, 2] 
+    depth_map[index_ray] = hit_depths
+    depth_map = depth_map.reshape((H, W))
+
+    actual_z_range = max_xyz[2] - min_xyz[2]
+    
+    if actual_z_range <= 1e-6:
+        depth_normalized = np.full((H, W), 128, dtype=np.uint8) 
+    else:
+        depth_normalized = cv2.normalize(src=depth_map, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        
+    # PNGファイルとしてメモリに書き出し
+    is_success, buffer = cv2.imencode(".png", depth_normalized)
+    png_bytes = BytesIO(buffer.tobytes())
+
+    # --- 8. 結果の表示とダウンロード ---
+    st.subheader("生成された上面図深度マップ（正射影）")
+    
+    caption_text = f"Depth Map (Z軸: {st.session_state['yaw_angle']}°, X軸: {st.session_state['pitch_angle']}°) - Z値が低い: 黒, Z値が高い: 白"
+    st.image(png_bytes, caption=caption_text)
+    
+    st.download_button(
+        label="深度マップ (.png) をダウンロード",
+        data=png_bytes,
+        file_name=f"depth_map_ortho_z{st.session_state['yaw_angle']}_x{st.session_state['pitch_angle']}.png",
+        mime="image/png"
+    )
