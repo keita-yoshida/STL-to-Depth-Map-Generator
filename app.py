@@ -23,8 +23,9 @@ if uploaded_file is not None:
         
         if not isinstance(mesh, trimesh.Trimesh):
             st.error("アップロードされたファイルは有効なメッシュデータではありません。")
-            return
-
+            # 修正: return ではなく st.stop() を使用する
+            st.stop()
+            # return <-- オリジナルのコードでエラーが発生した場所
         # --- 4. 仮想カメラと投影の設定 ---
         
         # モデルの境界ボックスの対角線の長さ
