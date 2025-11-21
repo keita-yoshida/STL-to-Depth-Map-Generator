@@ -4,3 +4,5 @@ pyrender
 numpy
 opencv-python
 PyOpenGL==3.1.5
+# networkxを明示的に含めることで、pyrenderの古い依存関係を上書きする
+networkx
