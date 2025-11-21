@@ -11,7 +11,7 @@ st.info("正射影で深度マップを生成します。サイドバーでZ軸�
 # 深度マップの解像度
 W, H = 512, 512
 
-# --- 2. セッションステートの初期化と回転ボタン ---
+# --- 2. セッションステートの初期化と回転ボタン (十字キー配置) ---
 
 # Z軸回転 (左右) のためのヨー角
 if 'yaw_angle' not in st.session_state:
@@ -26,27 +26,30 @@ def rotate_yaw(degrees):
 
 def rotate_pitch(degrees):
     """X軸周りの回転 (ピッチ)"""
-    # 角度を制限しないことで、360度自由に回転できるようにする
     st.session_state['pitch_angle'] = (st.session_state['pitch_angle'] + degrees) % 360
 
-st.sidebar.subheader("Z軸回転 (左右)")
-col1, col2 = st.sidebar.columns(2)
-with col1:
-    st.button("左へ 90°", on_click=rotate_yaw, args=(-90,), use_container_width=True, key="yaw_left")
-with col2:
-    st.button("右へ 90°", on_click=rotate_yaw, args=(90,), use_container_width=True, key="yaw_right")
-st.sidebar.markdown(f"**Z軸角度: {st.session_state['yaw_angle']}°**")
-st.sidebar.markdown("---")
+st.sidebar.subheader("モデル回転 (十字キー)")
 
-st.sidebar.subheader("X軸回転 (上下)")
-col3, col4 = st.sidebar.columns(2)
-with col3:
-    st.button("上へ 90°", on_click=rotate_pitch, args=(-90,), use_container_width=True, key="pitch_up")
-with col4:
-    st.button("下へ 90°", on_click=rotate_pitch, args=(90,), use_container_width=True, key="pitch_down")
-st.sidebar.markdown(f"**X軸角度: {st.session_state['pitch_angle']}°**")
-st.sidebar.markdown("---")
+# 1. 上下回転（上ボタン）
+col_p_up, col_p_mid, col_p_down = st.sidebar.columns([1, 1, 1])
+with col_p_mid:
+    st.button("上へ 90°", on_click=rotate_pitch, args=(-90,), use_container_width=True, help="X軸周りに回転 (視点の上方向へ)")
 
+# 2. 左右回転
+col_y_left, col_y_mid, col_y_right = st.sidebar.columns([1, 1, 1])
+with col_y_left:
+    st.button("左へ 90°", on_click=rotate_yaw, args=(-90,), use_container_width=True, help="Z軸周りに回転 (反時計回り)")
+with col_y_right:
+    st.button("右へ 90°", on_click=rotate_yaw, args=(90,), use_container_width=True, help="Z軸周りに回転 (時計回り)")
+
+# 3. 上下回転（下ボタン）
+col_p_up_2, col_p_mid_2, col_p_down_2 = st.sidebar.columns([1, 1, 1])
+with col_p_mid_2:
+    st.button("下へ 90°", on_click=rotate_pitch, args=(90,), use_container_width=True, help="X軸周りに回転 (視点の下方向へ)")
+
+st.sidebar.markdown(f"**Z軸角度 (左右): {st.session_state['yaw_angle']}°**")
+st.sidebar.markdown(f"**X軸角度 (上下): {st.session_state['pitch_angle']}°**")
+st.sidebar.markdown("---")
 
 # --- 3. ファイルアップロード ---
 uploaded_file = st.file_uploader("STLファイルをアップロードしてください", type=["stl"])
