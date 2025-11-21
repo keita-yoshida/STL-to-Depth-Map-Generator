@@ -2,4 +2,3 @@ streamlit
 trimesh
 numpy
 opencv-python
-matplotlib
