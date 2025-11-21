@@ -6,7 +6,6 @@ W, H = 512, 512
         # 仮想カメラと投影の設定 (簡単な正面投影)
         # Bounding boxの対角線の長さ
         max_extents = mesh.extents.max()
-        
         # カメラはZ軸方向からメッシュ全体が見えるように配置
         camera_distance = max_extents * 2.0
         
