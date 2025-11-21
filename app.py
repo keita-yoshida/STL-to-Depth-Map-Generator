@@ -89,4 +89,12 @@ if uploaded_file is not None:
         st.image(png_bytes, caption="Depth Map (近: 黒, 遠: 白)")
         
         st.download_button(
-            label="深度マップ (.png)
+            label="深度マップ (.png) をダウンロード",
+            data=png_bytes,
+            file_name="depth_map.png",
+            mime="image/png"
+        )
+
+    except Exception as e:
+        st.error(f"処理中にエラーが発生しました: {e}")
+        st.info("コードまたはSTLファイルに問題がある可能性があります。")
