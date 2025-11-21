@@ -5,8 +5,8 @@ import cv2 # 深度マップの正規化と画像化に必要
 from io import BytesIO
 
 # --- 1. アプリケーション設定 ---
-st.title("STL to Depth Map Generator (Raycasting)")
-st.info("trimeshのレイトレーシング機能で、高精度な深度マップを生成します。")
+st.title("STL to Depth Map Generator (Stable Raycasting)")
+st.info("Trimeshのバージョン依存性を排除した、純粋なNumPyベースのレイトレーシングです。")
 
 # 深度マップの解像度
 W, H = 512, 512
@@ -25,83 +25,87 @@ if uploaded_file is not None:
             st.error("アップロードされたファイルは有効なメッシュデータではありません。")
             st.stop() # Streamlitの実行を停止
 
-        # --- 4. 仮想カメラと投影の設定 ---
-        
-        # モデルの中心を原点に移動
+        # モデルの中心を原点に移動し、Z軸方向を上面に固定
         mesh.vertices -= mesh.centroid
 
-        # Bounding boxの対角線の長さ
-        max_extents = mesh.extents.max()
+        # --- 4. 仮想カメラと投影の設定 (NumPyのみ) ---
+        
+        # モデルのX/Y方向の最大寸法
+        max_xy_extents = np.max(mesh.extents[:2])
         
         # カメラはZ軸方向からメッシュ全体が見えるように配置
-        camera_distance = max_extents * 2.5
+        camera_distance = max_xy_extents * 2.5
         
-        # モデルの中心をカメラが向くように変換行列を構築
-        # 上面図（Z軸プラス方向からマイナス方向を見る）
-        camera_transform = np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, 1, camera_distance], 
-            [0, 0, 0, 1]
-        ])
-
-        # 視錐台の視野角 (FOV) を計算
-        tan_half_fov = (max_extents / 2.0) / camera_distance
-        fov = np.arctan(tan_half_fov) * 2
-
-        # --- 5. レイトレーシングのためのレイを生成 ---
+        # カメラの原点 (Z軸上から見下ろす)
+        camera_origin = np.array([0.0, 0.0, camera_distance])
         
-        # trimesh.util.create_perspective_rays を使用してレイの始点と方向を手動で計算
-        # 'RayMeshIntersector' object has no attribute 'camera_rays' エラーを回避
-        ray_origins, ray_directions = trimesh.util.create_perspective_rays(
-            resolution=[W, H],
-            transform=camera_transform,
-            fov=fov
-        )
+        # 投影平面 (深度マップのスクリーン) のサイズ
+        # 視野の幅と高さをモデルの寸法に合わせて設定
+        view_width = max_xy_extents * 1.5 
+        view_height = max_xy_extents * 1.5 
         
-        # レイトレーシングを実行
+        # --- 5. レイトレーシングのためのレイを生成 (NumPyのみ) ---
+        
+        # ピクセルグリッドの座標を生成
+        x_indices = np.linspace(-view_width / 2, view_width / 2, W)
+        y_indices = np.linspace(-view_height / 2, view_height / 2, H)
+        
+        # XとYのメッシュグリッドを作成
+        X, Y = np.meshgrid(x_indices, y_indices)
+        
+        # 投影平面上のターゲットポイント（カメラが向かう方向）を計算
+        target_points = np.stack((X.flatten(), Y.flatten(), np.zeros(W * H)), axis=1)
+        
+        # レイの始点は全てカメラの原点
+        ray_origins = np.tile(camera_origin, (W * H, 1)).astype(np.float64)
+        
+        # レイの方向は、カメラの原点からターゲットポイントへ
+        ray_directions = target_points - ray_origins
+        
+        # 方向ベクトルを正規化
+        ray_directions /= np.linalg.norm(ray_directions, axis=1)[:, np.newaxis]
+        
+        # --- 6. レイトレーシングを実行 ---
         # locations: 交点の座標, index_ray: どのレイがヒットしたか
         locations, index_ray, index_tri = mesh.ray.intersects_location(
             ray_origins, ray_directions, multiple_hits=False
         )
         
-        # --- 6. 深度マップの生成 ---
+        # --- 7. 深度マップの生成 ---
         
         # 全てのピクセルに対応する深度配列を初期化 (遠い点を最大値として設定)
         max_dist = camera_distance * 3
         depth_map = np.full(W * H, max_dist, dtype=np.float32)
 
-        # 交点までの距離を計算 (カメラ位置から交点まで)
-        camera_origin = camera_transform[:3, 3]
-        
         # ヒットしたレイの、カメラ位置から交点までのユークリッド距離
         distances = np.linalg.norm(locations - camera_origin, axis=1)
         
         # 深度マップに距離を書き込む
+        # NOTE: Y軸の向きを反転させるため、H - 1 - index_ray // W などの操作が必要な場合があるが、
+        #       OpenCVの正規化後にPillowで画像を反転させる方が簡単
         depth_map[index_ray] = distances
         depth_map = depth_map.reshape((H, W))
 
-        # --- 7. 深度値の正規化と画像化 (OpenCV) ---
+        # --- 8. 深度値の正規化と画像化 (OpenCV) ---
         
         # 深度値を0-255の範囲に正規化
-        # NORM_MINMAX: 最小値と最大値を指定した範囲に正規化
         depth_normalized = cv2.normalize(depth_map, None, 255, 0, cv2.NORM_MINMAX, cv2.CV_8U)
         
         # PNGファイルとしてメモリに書き出し
         is_success, buffer = cv2.imencode(".png", depth_normalized)
         png_bytes = BytesIO(buffer.tobytes())
 
-        # --- 8. 結果の表示とダウンロード ---
+        # --- 9. 結果の表示とダウンロード ---
         st.subheader("生成された深度マップ")
         st.image(png_bytes, caption="Depth Map (近: 黒, 遠: 白)")
         
         st.download_button(
             label="深度マップ (.png) をダウンロード",
             data=png_bytes,
-            file_name="depth_map.png",
+            file_name="depth_map_final.png",
             mime="image/png"
         )
 
     except Exception as e:
         st.error(f"処理中にエラーが発生しました: {e}")
-        st.info("依存関係、またはSTLファイルの構造に問題がある可能性があります。")
+        st.info("依存関係は満たされていますが、STLファイルのデータ構造に問題がある可能性があります。")
