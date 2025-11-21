@@ -94,6 +94,8 @@ if uploaded_file is not None:
         # 深度マップを2D配列にリシェイプ
         depth_map = depth_map.reshape((H, W))
 
+# ... (app.py のコード)
+
         # --- 8. 深度値の正規化と画像化 (OpenCV) ---
         
         # 深度値を0-255の範囲に正規化 (8bitグレースケール)
@@ -107,13 +109,17 @@ if uploaded_file is not None:
             depth_normalized = np.full((H, W), 128, dtype=np.uint8) # 中間グレーで埋める
         else:
             # 深度値をZminからZmaxの範囲で正規化
+            # ここではZ値が低い（奥）ものを0（黒）、Z値が高い（手前）ものを255（白）にする
             depth_normalized = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
-            # 近いものが黒、遠いものが白になるように反転
+            
+            # 目的: Z値が高い（手前）ほど黒、Z値が低い（奥）ほど白
+            # 現在のdepth_normalizedは、Z値が高いほど白なので、これを反転させる
             depth_normalized = 255 - depth_normalized
             
         # PNGファイルとしてメモリに書き出し
         is_success, buffer = cv2.imencode(".png", depth_normalized)
         png_bytes = BytesIO(buffer.tobytes())
+
 
         # --- 9. 結果の表示とダウンロード ---
         st.subheader("生成された上面図深度マップ（正射影）")
