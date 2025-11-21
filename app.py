@@ -12,13 +12,10 @@ st.info("パースのない正射影で、Z値に基づいた正しい深度マ�
 W, H = 512, 512
 
 # --- 2. セッションステートの初期化と回転ボタン ---
-# 現在の回転角度をセッションステートで記憶
 if 'rotation_angle' not in st.session_state:
     st.session_state['rotation_angle'] = 0
 
 def rotate_model(degrees):
-    """現在の角度に指定された角度を追加するコールバック関数"""
-    # 角度を0-359度の間に保つ
     st.session_state['rotation_angle'] = (st.session_state['rotation_angle'] + degrees) % 360
 
 st.sidebar.subheader("モデルの回転")
@@ -39,7 +36,6 @@ uploaded_file = st.file_uploader("STLファイルをアップロードしてく�
 if uploaded_file is not None:
     file_bytes = BytesIO(uploaded_file.getvalue())
     
-    # 全体の処理を try-except で囲む (構文エラー対策)
     try:
         # --- 4. STLの読み込みと前処理 (trimesh) ---
         mesh = trimesh.load_mesh(file_bytes, file_type='stl')
@@ -48,23 +44,18 @@ if uploaded_file is not None:
             st.error("アップロードされたファイルは有効なメッシュデータではありません。")
             st.stop() 
 
-        # モデルの中心を原点に移動
         mesh.vertices -= mesh.centroid
 
-        # 🔥 回転処理の適用
+        # 回転処理の適用
         angle_rad = np.radians(st.session_state['rotation_angle'])
-        # Z軸を中心に回転させる変換行列を作成し、メッシュに適用
         rotation_matrix = trimesh.transformations.rotation_matrix(angle_rad, [0, 0, 1])
         mesh.apply_transform(rotation_matrix)
 
         # --- 5. 仮想カメラと正射影の設定 ---
-        
-        # モデルのX/Y/Zの範囲を取得 (回転後のboundsを使用)
         bounds = mesh.bounds 
         min_xyz = bounds[0]
         max_xyz = bounds[1]
         
-        # モデルを画面全体に収めるためのビューポートサイズを決定
         view_size_x = max_xyz[0] - min_xyz[0]
         view_size_y = max_xyz[1] - min_xyz[1]
         
@@ -78,16 +69,32 @@ if uploaded_file is not None:
             view_height = view_size_y * 1.2
             view_width = view_height * aspect_ratio_image
 
-        # カメラの位置 (Z軸の非常に遠い位置から正対する)
         camera_origin_z = max_xyz[2] + view_size_y * 2 
         
         # --- 6. レイトレーシングのためのレイを生成 (正射影) ---
         
-        # ピクセルグリッドの座標を生成 (XとYの範囲をカバー)
         x_coords = np.linspace(-view_width / 2, view_width / 2, W)
         y_coords = np.linspace(-view_height / 2, view_height / 2, H)
         
         X, Y = np.meshgrid(x_coords, y_coords)
         
-        # Line 93: レイの始点は投影平面上の各点と、Z軸上のカメラ位置
-        # 括弧は完全に
+        # レイの始点を生成 (Line 93を含むブロック。括弧は完璧に閉じられています)
+        origins_stack = np.stack((X.flatten(), Y.flatten(), np.full(W * H, camera_origin_z)), axis=1)
+        ray_origins = origins_stack.astype(np.float64)
+        
+        # レイの方向は全てZ軸マイナス方向
+        ray_directions = np.tile(np.array([0.0, 0.0, -1.0]), (W * H, 1)).astype(np.float64)
+        
+        # --- 7. レイトレーシングを実行 ---
+        locations, index_ray, index_tri = mesh.ray.intersects_location(
+            ray_origins, ray_directions, multiple_hits=False
+        )
+        
+        # --- 8. 深度マップの生成 ---
+        
+        depth_map = np.full(W * H, min_xyz[2], dtype=np.float32) 
+        hit_depths = locations[:, 2] 
+        depth_map[index_ray] = hit_depths
+        depth_map = depth_map.reshape((H, W))
+
+        # --- 9. 深度値の正規化と
