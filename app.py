@@ -5,118 +5,102 @@ import cv2
 from io import BytesIO
 
 # --- 1. アプリケーション設定 ---
-st.title("STL to Depth Map Generator (3D Rotatable)")
-st.info("パースのない正射影で、Z値に基づいた正しい深度マップを生成します。サイドバーのボタンでモデルを回転できます。")
+st.title("STL to Depth Map Generator (Pro Version)")
+st.info("正射影深度マップ生成。回転、解像度、余白を自由にカスタマイズ可能です。")
 
+# --- 2. セッションステートの初期化と回転ボタン ---
 
-# --- 2. セッションステートの初期化と回転ボタン (十字キー配置) ---
-
-# Z軸回転 (左右) のためのヨー角
 if 'yaw_angle' not in st.session_state:
     st.session_state['yaw_angle'] = 0
-# X軸回転 (上下) のためのピッチ角
 if 'pitch_angle' not in st.session_state:
     st.session_state['pitch_angle'] = 0
 
 def rotate_yaw(degrees):
-    """Y軸周りの回転 (左右に回り込む)"""
     st.session_state['yaw_angle'] = (st.session_state['yaw_angle'] + degrees) % 360
 
 def rotate_pitch(degrees):
-    """X軸周りの回転 (上下に傾ける)"""
     st.session_state['pitch_angle'] = (st.session_state['pitch_angle'] + degrees) % 360
 
 st.sidebar.subheader("モデル回転 (十字キー)")
-
-# 1. 上下回転（上ボタン）: 中央に配置 (X軸)
+# 十字キーレイアウト
 col_p_up, col_p_mid, col_p_down = st.sidebar.columns([1, 1, 1])
 with col_p_mid:
-    st.button("上へ 90°", on_click=rotate_pitch, args=(-90,), use_container_width=True, key="pitch_up", help="X軸周りに回転 (モデルが上へ傾く)")
+    st.button("上へ 90°", on_click=rotate_pitch, args=(-90,), use_container_width=True, key="pitch_up")
 
-# 2. 左右回転: 中央の行に配置 (Y軸)
 col_y_left, col_y_mid, col_y_right = st.sidebar.columns([1, 1, 1])
 with col_y_left:
-    st.button("左へ 90°", on_click=rotate_yaw, args=(90,), use_container_width=True, key="yaw_left", help="Y軸周りに回転 (カメラが左に回り込む)")
+    st.button("左へ 90°", on_click=rotate_yaw, args=(90,), use_container_width=True, key="yaw_left")
 with col_y_right:
-    st.button("右へ 90°", on_click=rotate_yaw, args=(-90,), use_container_width=True, key="yaw_right", help="Y軸周りに回転 (カメラが右に回り込む)")
+    st.button("右へ 90°", on_click=rotate_yaw, args=(-90,), use_container_width=True, key="yaw_right")
 
-# 3. 上下回転（下ボタン）: 中央に配置 (X軸)
 col_p_up_2, col_p_mid_2, col_p_down_2 = st.sidebar.columns([1, 1, 1])
 with col_p_mid_2:
-    st.button("下へ 90°", on_click=rotate_pitch, args=(90,), use_container_width=True, key="pitch_down", help="X軸周りに回転 (モデルが下へ傾く)")
+    st.button("下へ 90°", on_click=rotate_pitch, args=(90,), use_container_width=True, key="pitch_down")
+
+# --- 3. 詳細設定 (解像度・余白) ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("出力設定")
+
+# 解像度設定
+W = st.sidebar.number_input("出力幅 (px)", min_value=100, max_value=4096, value=512, step=128)
+H = st.sidebar.number_input("出力高さ (px)", min_value=100, max_value=4096, value=512, step=128)
+
+# 🔥 修正点: 余白の設定スライダーを追加
+margin_percent = st.sidebar.slider("モデル周囲の余白 (%)", min_value=0, max_value=100, value=10, step=1)
+# 1.0 (0%) ~ 2.0 (100%) の係数に変換
+padding_factor = 1.0 + (margin_percent / 100.0)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"**Y軸角度 (左右): {st.session_state['yaw_angle']}°**")
-st.sidebar.markdown(f"**X軸角度 (上下): {st.session_state['pitch_angle']}°**")
-
-# 🔥 修正点 1: 解像度設定をサイドバーに追加
-st.sidebar.markdown("---")
-st.sidebar.subheader("解像度設定 (ピクセル)")
-
-# デフォルト値は512x512
-W = st.sidebar.number_input("幅 (Width)", min_value=100, max_value=2048, value=512, step=100)
-H = st.sidebar.number_input("高さ (Height)", min_value=100, max_value=2048, value=512, step=100)
-
-if W * H > 4000000: # 例: 2000x2000以上の処理負荷を制限
-    st.sidebar.warning("警告: 高解像度は処理に時間がかかる場合があります。")
+st.sidebar.caption(f"Y軸角度: {st.session_state['yaw_angle']}° / X軸角度: {st.session_state['pitch_angle']}°")
 
 
-# --- 3. ファイルアップロード ---
+# --- 4. ファイルアップロード ---
 uploaded_file = st.file_uploader("STLファイルをアップロードしてください", type=["stl"])
 
 if uploaded_file is not None:
     file_bytes = BytesIO(uploaded_file.getvalue())
     
-    # 処理の大部分は try-except で囲む
     try:
-        # --- 4. STLの読み込みと前処理 (trimesh) ---
+        # メッシュの読み込み
         mesh = trimesh.load_mesh(file_bytes, file_type='stl')
-        
         if not isinstance(mesh, trimesh.Trimesh):
-            st.error("アップロードされたファイルは有効なメッシュデータではありません。")
+            st.error("有効なメッシュデータではありません。")
             st.stop() 
 
         mesh.vertices -= mesh.centroid
 
-        # 回転処理の適用
+        # 回転の適用
         yaw_rad = np.radians(st.session_state['yaw_angle'])
         pitch_rad = np.radians(st.session_state['pitch_angle'])
-
-        # Y軸回転行列 (左右)
         yaw_matrix = trimesh.transformations.rotation_matrix(yaw_rad, [0, 1, 0])
-        
-        # X軸回転行列 (上下)
         pitch_matrix = trimesh.transformations.rotation_matrix(pitch_rad, [1, 0, 0])
-
         combined_matrix = trimesh.transformations.concatenate_matrices(pitch_matrix, yaw_matrix)
         mesh.apply_transform(combined_matrix)
 
     except Exception as e:
-        st.error(f"STLファイルの読み込みまたは処理中にエラーが発生しました: {e}")
-        st.info("ファイルが破損しているか、依存ライブラリの初期化に失敗している可能性があります。")
+        st.error(f"STL処理エラー: {e}")
         st.stop()
 
-    # --- 5. 仮想カメラと正射影の設定 ---
+    # --- 5. ビューポート計算 (余白設定を適用) ---
     bounds = mesh.bounds 
-    min_xyz = bounds[0]
-    max_xyz = bounds[1]
+    min_xyz, max_xyz = bounds[0], bounds[1]
     view_size_x = max_xyz[0] - min_xyz[0]
     view_size_y = max_xyz[1] - min_xyz[1]
     
     aspect_ratio_mesh = view_size_x / view_size_y
-    aspect_ratio_image = W / H # 動的な W/H を使用
+    aspect_ratio_image = W / H
 
+    # 🔥 padding_factor を使用してビュー幅を計算
     if aspect_ratio_mesh > aspect_ratio_image:
-        view_width = view_size_x * 1.2 
+        view_width = view_size_x * padding_factor
         view_height = view_width / aspect_ratio_image
     else:
-        view_height = view_size_y * 1.2
+        view_height = view_size_y * padding_factor
         view_width = view_height * aspect_ratio_image
 
     camera_origin_z = max_xyz[2] + view_size_y * 2 
     
-    # --- 6. レイトレーシングのためのレイを生成 ---
-    # 動的な W/H を使用
+    # --- 6. レイ生成と実行 ---
     x_coords = np.linspace(-view_width / 2, view_width / 2, W)
     y_coords = np.linspace(-view_height / 2, view_height / 2, H)
     X, Y = np.meshgrid(x_coords, y_coords)
@@ -125,43 +109,38 @@ if uploaded_file is not None:
     ray_origins = origins_stack.astype(np.float64)
     ray_directions = np.tile(np.array([0.0, 0.0, -1.0]), (W * H, 1)).astype(np.float64)
     
-    # --- 7. レイトレーシングを実行 ---
     try:
         locations, index_ray, index_tri = mesh.ray.intersects_location(
             ray_origins, ray_directions, multiple_hits=False
         )
     except Exception as e:
-        st.error(f"レイトレーシング中にエラーが発生しました: {e}")
-        st.info("STLモデルの構造が複雑すぎるか、レイトレーシング機能に問題があります。")
+        st.error(f"計算エラー: {e}")
         st.stop()
     
-    # --- 8. 深度マップの生成と表示 ---
-    # 動的な W*H を使用
+    # --- 7. 深度マップ生成 ---
+    # 背景（ヒットなし）はモデルの底と同じ深さにする
     depth_map = np.full(W * H, min_xyz[2], dtype=np.float32) 
-    hit_depths = locations[:, 2] 
-    depth_map[index_ray] = hit_depths
-    depth_map = depth_map.reshape((H, W)) # 動的な H, W を使用
+    if len(locations) > 0:
+        depth_map[index_ray] = locations[:, 2]
+    
+    depth_map = depth_map.reshape((H, W))
 
     actual_z_range = max_xyz[2] - min_xyz[2]
-    
     if actual_z_range <= 1e-6:
         depth_normalized = np.full((H, W), 128, dtype=np.uint8) 
     else:
         depth_normalized = cv2.normalize(src=depth_map, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         
-    # PNGファイルとしてメモリに書き出し
     is_success, buffer = cv2.imencode(".png", depth_normalized)
     png_bytes = BytesIO(buffer.tobytes())
 
-    # --- 9. 結果の表示とダウンロード ---
-    st.subheader("生成された上面図深度マップ（正射影）")
-    
-    caption_text = f"Depth Map ({W}x{H}px) (Y軸: {st.session_state['yaw_angle']}°, X軸: {st.session_state['pitch_angle']}°) - Z値が低い: 黒, Z値が高い: 白"
-    st.image(png_bytes, caption=caption_text)
+    # --- 8. 表示とダウンロード ---
+    st.subheader("プレビュー")
+    st.image(png_bytes, caption=f"解像度: {W}x{H} / 余白: {margin_percent}%")
     
     st.download_button(
         label="深度マップ (.png) をダウンロード",
         data=png_bytes,
-        file_name=f"depth_map_{W}x{H}_y{st.session_state['yaw_angle']}_x{st.session_state['pitch_angle']}.png",
+        file_name=f"depth_map_{W}x{H}_m{margin_percent}.png",
         mime="image/png"
     )
