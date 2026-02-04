@@ -105,4 +105,26 @@ if uploaded_file is not None:
         locations, index_ray, _ = mesh.ray.intersects_location(origins, directions, multiple_hits=False)
         
         # --- 7. 深度マップ生成 ---
-        depth_map = np.full(W
+        depth_map = np.full(W * H, min_xyz[2], dtype=np.float32) 
+        if len(locations) > 0:
+            depth_map[index_ray] = locations[:, 2]
+        depth_map = depth_map.reshape((H, W))
+
+        actual_z_range = max_xyz[2] - min_xyz[2]
+        if actual_z_range <= 1e-6:
+            depth_norm = np.full((H, W), 128, dtype=np.uint8) 
+        else:
+            # 正規化
+            depth_norm = cv2.normalize(src=depth_map, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+            
+        png_bytes = BytesIO(cv2.imencode(".png", depth_norm)[1].tobytes())
+
+        # --- 8. 表示とダウンロード ---
+        st.subheader(f"プレビュー ({W} x {H})")
+        st.image(png_bytes, caption=f"Y軸: {st.session_state['yaw_angle']}° / X軸: {st.session_state['pitch_angle']}°")
+        st.download_button("画像をダウンロード (.png)", png_bytes, f"depth_{W}x{H}.png", "image/png")
+
+        st.sidebar.info(f"現在の解像度: {W} x {H}")
+
+    except Exception as e:
+        st.error(f"エラーが発生しました: {e}")
